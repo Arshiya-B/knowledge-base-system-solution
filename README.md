@@ -1,6 +1,6 @@
-# Dupaco knowledge system
+# Knowledge system
 
-A deterministic Python 3.11 system (standard library only) that reads dated snapshots of the Dupaco credit union website and answers member questions with the current, correctly tiered value, a source, and an honest "I don't know" when the site does not say. It also lists places where the site contradicts itself.
+A deterministic Python 3.11 system (standard library only) that reads dated snapshots of the credit union website and answers member questions with the current, correctly tiered value, a source, and an honest "I don't know" when the site does not say. It also lists places where the site contradicts itself.
 
 No API keys, no network calls, no LLM. See `NOTES.md` for the approach, evaluation record and known gaps.
 
