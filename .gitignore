@@ -1,0 +1,12 @@
+# supplied data and local output are not part of the submission
+snapshots/
+snapshots_zip/
+results/
+*.pdf
+# secrets and local environments
+.env
+*.key
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

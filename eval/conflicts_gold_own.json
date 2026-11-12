@@ -1,0 +1,73 @@
+[
+ {
+  "id": "g1",
+  "topic_keywords": [
+   "2023-26",
+   "60 months"
+  ],
+  "values": [
+   "5.34%",
+   "5.19%"
+  ],
+  "correct_value": "5.19%"
+ },
+ {
+  "id": "g2",
+  "topic_keywords": [
+   "30-year",
+   "purchase",
+   "832"
+  ],
+  "values": [
+   "6.00%",
+   "7.25%"
+  ],
+  "correct_value": "7.25%"
+ },
+ {
+  "id": "g3",
+  "topic_keywords": [
+   "15-year",
+   "purchase"
+  ],
+  "values": [
+   "5.50%",
+   "6.75%"
+  ],
+  "correct_value": "6.75%"
+ },
+ {
+  "id": "g4",
+  "topic_keywords": [
+   "17 month",
+   "jumbo"
+  ],
+  "values": [
+   "3.91%",
+   "4.01%"
+  ],
+  "correct_value": "4.20%"
+ },
+ {
+  "id": "g5",
+  "topic_keywords": [
+   "1st rate checking"
+  ],
+  "values": [
+   "2.96%",
+   "2.47%"
+  ],
+  "correct_value": "2.47%"
+ },
+ {
+  "id": "g6",
+  "topic_keywords": [
+   "branch"
+  ],
+  "values": [
+   "22 branch",
+   "24 branch"
+  ],
+  "correct_value": "22 branch"
+ }
+]
