@@ -10,6 +10,7 @@ Deterministic and dependency-free (standard library only). No network, no model 
 See NOTES.md for how "current" is decided.
 """
 from __future__ import annotations
+import re
 
 import sys
 from datetime import date
@@ -68,7 +69,8 @@ class KnowledgeBase:
         res = self.engine.answer(question, as_of)
         gave_up = res is None or (not res.confident and not res.urls)
         # a duration ("how long can the interest rate stay fixed") is not a request for a rate value
-        if gave_up and (not parse_query(question).is_rate or intent_of(question) == "duration"):
+        if gave_up and (not parse_query(question).is_rate or intent_of(question) == "duration" or
+                     re.search(r"\b(?:if|when|after|once) i (?:turn|switch|enable|sign|set|use|have|open|add)\b", question.lower())):
             si = self.engine.pick_snapshot(as_of)
             if si is not None:
                 pr = self.prose.answer(si, question)
@@ -87,19 +89,52 @@ class KnowledgeBase:
 
     # ------------------------------------------------------------------ conflicts
     def conflicts(self) -> list[Conflict]:
-        out = []
+        rows = []
         for c in rate_conflicts(self.engine):
-            out.append(Conflict(topic=c["topic"], values=c["values"],
-                                sources=[Source(url=u, snapshot_id=s, quote=q) for u, s, q in c["sources"]],
-                                resolution=c["resolution"], reason=c["reason"]))
+            rows.append((c["topic"], c["values"], c["sources"], c["resolution"], c["reason"]))
         if self.engine.snap_ids:
             si = len(self.engine.snap_ids) - 1
             bc = branch_count_conflict(self.prose.index.snaps[si]["passages"], self.engine.snap_ids[si])
             if bc:
-                out.append(Conflict(topic=bc["topic"], values=bc["values"],
-                                    sources=[Source(url=u, snapshot_id=s, quote=q) for u, s, q in bc["sources"]],
-                                    resolution=bc["resolution"], reason=bc["reason"]))
+                rows.append((bc["topic"], bc["values"], bc["sources"], bc["resolution"], bc["reason"]))
+        if not GROUP_BY_PRODUCT:
+            return [Conflict(topic=t, values=v, sources=[Source(url=u, snapshot_id=s, quote=q) for u, s, q in src],
+                             resolution=r, reason=why) for t, v, src, r, why in rows]
+        groups: dict[str, list] = {}
+        for row in rows:
+            groups.setdefault(_product_key(row[0]), []).append(row)
+        out = []
+        for key, rs in groups.items():
+            if len(rs) == 1:
+                t, v, src, r, why = rs[0]
+                out.append(Conflict(topic=t, values=v, sources=[Source(url=u, snapshot_id=s, quote=q) for u, s, q in src],
+                                    resolution=r, reason=why))
+                continue
+            values, seen_v, sources, seen_s = [], set(), [], set()
+            for t, v, src, r, why in rs:
+                for x in v:
+                    if x not in seen_v:
+                        seen_v.add(x); values.append(x)
+                for u, s, q in src:
+                    if (u, q) not in seen_s:
+                        seen_s.add((u, q)); sources.append(Source(url=u, snapshot_id=s, quote=q))
+            winners = "; ".join(f"{(t.split(key, 1)[-1].strip(' :,') if key in t else t.split(':', 1)[-1].strip())}: {r}" for t, v, src, r, why in rs if r)
+            out.append(Conflict(topic=key, values=values, sources=sources, resolution=winners,
+                                reason=f"{len(rs)} rows on this product disagree across pages. Winner per row (newest effective stamp, then newest snapshot, then page authority): {winners}"))
         return out
+
+
+GROUP_BY_PRODUCT = True
+
+
+def _product_key(topic: str) -> str:
+    """One conflict per product family instead of one per rate row."""
+    t = re.sub(r"\s*\((?:dividend rate, APY|rate, APR|APR|rate|APY)\)\s*$", "", topic).strip()
+    if t.startswith(("Purchase:", "Refinance:")):
+        kind, _, _ = t.partition(":")
+        return f"Mortgage {kind.lower()} rates"
+    head = re.split(r":|, \$", t)[0].strip()
+    return head
 
 
 def build() -> KnowledgeBase:

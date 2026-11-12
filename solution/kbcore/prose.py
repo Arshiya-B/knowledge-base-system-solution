@@ -284,6 +284,8 @@ def intent_of(q: str) -> str:
     if re.search(r"\baddress\b|\bwhere is\b|\bwhere'?s\b|\blocated\b|\bstreet\b", t) and \
             not re.search(r"email|e-mail|ip address", t):
         return "address"
+    if re.search(r"\bextension\b|\bwhat ext\b|\bdial\b", t):
+        return "contact"
     if re.search(r"\bphone\b|\bcall\b|\btelephone\b|\bnumber (?:for|to)\b|\bcontact (?:number|info)", t) and \
             not re.search(r"\b(?:update|change|edit|correct|modify)\b", t):
         return "phone"
@@ -384,7 +386,7 @@ class ProseEngine:
             return None
         if REALTIME_RE.search(question):
             return None                     # a static site snapshot cannot say what the weather or a market price is right now
-        hits = self.index.search(si, qt, k=300 if intent == "count" else 60)
+        hits = self.index.search(si, qt, k=300 if intent in ("count", "contact") else 60)
         if not hits:
             return None
         valid = _VALID.get(intent)
@@ -437,7 +439,7 @@ class ProseEngine:
                 continue
             if proper:
                 # a card (address, phone, hours) must name the place itself; other facts may name it elsewhere on the page
-                where = p.tf if intent in ("address", "phone", "hours") else (p.tf.keys() | S["pagetok"].get(p.url, set()))
+                where = p.tf if (intent in ("address", "phone", "hours") and not re.search(r"\bext(?:ension)?\b", question.lower())) else (p.tf.keys() | S["pagetok"].get(p.url, set()))
                 if not all(t in where for t in proper):
                     continue
             if need_nums and not all(n in p.tf for n in need_nums):
