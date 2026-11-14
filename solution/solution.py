@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +27,7 @@ from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
 from kbcore import pages as P  # noqa: E402
 from kbcore.conflicts import branch_count_conflict, rate_conflicts  # noqa: E402
 from kbcore.engine import ABSTAIN_TEXT, OK_TYPES, RateEngine, parse_query  # noqa: E402
-from kbcore.prose import ProseEngine, intent_of, page_links, page_passages  # noqa: E402
+from kbcore.prose import ProseEngine, intent_of, page_links, page_passages, page_people  # noqa: E402
 from kbcore.tables import extract_rows  # noqa: E402
 from kbcore.textutil import parse_iso  # noqa: E402
 
@@ -43,7 +43,7 @@ class KnowledgeBase:
         idx = len(self.engine.snap_ids)
         taken_on = parse_iso(snapshot.taken_on) or date.min
         rows, texts = [], {}
-        passages, links = [], []
+        passages, links, people = [], [], []
         seen_urls = set()
         for pg in snapshot.pages:
             url = P.canon_url(pg.url)
@@ -55,6 +55,8 @@ class KnowledgeBase:
             if ptype not in ("file", "calculator"):
                 passages.extend(page_passages(pg.markdown, url, ptype, P.AUTH[ptype], taken_on, pg.title))
                 links.extend((a, u, url, P.AUTH[ptype]) for a, u in page_links(pg.markdown))
+                if ptype in ("landing", "product"):
+                    people.extend((n, t, url) for n, t in page_people(pg.markdown))
             if ptype not in OK_TYPES:
                 continue
             rows.extend(extract_rows(
@@ -62,10 +64,12 @@ class KnowledgeBase:
                 snap_idx=idx, taken_on=taken_on, fetched=parse_iso(pg.fetched_at),
                 table_counter=self._table_counter))
         self.engine.add_snapshot(snapshot.snapshot_id, taken_on, rows, texts)
-        self.prose.index.add_snapshot(passages, links)
+        self.prose.index.add_snapshot(passages, links, people)
 
     # ------------------------------------------------------------------ answer
     def answer(self, question: str, as_of: Optional[str] = None) -> Answer:
+        if as_of is None:
+            as_of = _date_in_question(question, self.engine.snap_dates[-1].year if self.engine.snap_dates else None)
         res = self.engine.answer(question, as_of)
         gave_up = res is None or (not res.confident and not res.urls)
         # a duration ("how long can the interest rate stay fixed") is not a request for a rate value
@@ -126,15 +130,39 @@ class KnowledgeBase:
 
 GROUP_BY_PRODUCT = True
 
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"])}
+_MON_RE = "|".join(_MONTHS)
+_ASOF_RE = re.compile(
+    r"\b(?:as of|in|during|back in|on|for|around|by)\s+"
+    r"(?P<mon>" + _MON_RE + r")\b(?:\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?\b)?(?:,?\s+(?P<yr>20\d\d)\b)?",
+    re.I)
 
-def _product_key(topic: str) -> str:
-    """One conflict per product family instead of one per rate row."""
-    t = re.sub(r"\s*\((?:dividend rate, APY|rate, APR|APR|rate|APY)\)\s*$", "", topic).strip()
-    if t.startswith(("Purchase:", "Refinance:")):
-        kind, _, _ = t.partition(":")
-        return f"Mortgage {kind.lower()} rates"
-    head = re.split(r":|, \$", t)[0].strip()
-    return head
+
+def _date_in_question(question: str, default_year: Optional[int] = None) -> Optional[str]:
+    """A person who writes "as of May 2026" or "for July 4" means the site on that date, even if the caller passed
+    no as_of. Month only: the last day of that month. Month and day: that day. No year: the year of the snapshots."""
+    for m in _ASOF_RE.finditer(question):
+        word = m.group("mon")
+        has_day, has_yr = bool(m.group("day")), bool(m.group("yr"))
+        if word.lower() == "may" and not has_yr and not has_day and not word[0].isupper():
+            continue                           # "may" as a verb ("what rate may I get in ...")
+        if not has_yr and not has_day and not word[0].isupper():
+            continue
+        if not has_yr and default_year is None:
+            continue
+        mon = _MONTHS[word.lower()]
+        yr = int(m.group("yr")) if has_yr else default_year
+        if has_day:
+            day = int(m.group("day"))
+        else:
+            nxt = date(yr + (mon == 12), mon % 12 + 1, 1)
+            day = (nxt - timedelta(days=1)).day
+        try:
+            return date(yr, mon, day).isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def build() -> KnowledgeBase:

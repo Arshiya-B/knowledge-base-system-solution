@@ -463,9 +463,15 @@ class RateEngine:
                           self._sources([pick] + slots), True, note)
 
         shown = slots[:MAX_ROWS]
-        lines = []
+        lines, where = [], {}
         for r in shown:
             line = f"{self._row_name(r)}: {self._row_value(q, r)}"
+            key = line.replace(" (business)", "").lower()
+            if key in where:                      # the same product and value on two pages: say it once, prefer the plain label
+                if "(business)" in lines[where[key]] and "(business)" not in line:
+                    lines[where[key]] = line
+                continue
+            where[key] = len(lines)
             lines.append(line)
         stamps = sorted({r.stamp for r in shown if r.stamp})
         tail = ""

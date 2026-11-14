@@ -53,3 +53,4 @@ Ingest takes about 7 seconds; answers take about 0.1 seconds at p95.
 - Public set: accuracy 0.9488, consistency 1.0, speed score 1.0, no errors, no stale-value hits. This set was used for tuning, so it is optimistic.
 - Clean first reads on unseen question sets we wrote ranged from about 0.43 to 0.88, so expect roughly 0.6 to 0.8 on unseen prose questions.
 - The conflicts score uses our own small gold file, so it is not an independent measure.
+- Weaker areas: loosely worded questions, several figures on one page for different products, and a few phone or extension questions. `NOTES.md` lists the known gaps.

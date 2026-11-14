@@ -35,6 +35,21 @@ _ABBR = ["ext.", "a.m.", "p.m.", "Mon.", "Tue.", "Wed.", "Thu.", "Fri.", "Sat.",
          "Mr.", "Mrs.", "Ms.", "Dr.", "Co.", "Ct.", "Hwy.", "N.", "S.", "E.", "W.", "Ste.", "vs.", "etc."]
 
 
+_DAY = r"(?:Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)[a-z]*"
+_TIME = r"\d{1,2}(?::\d{2})?\s*[ap]\.m\.|noon"
+_ITEM = rf"{_DAY}(?:\s*[-\u2013]\s*{_DAY})?:?\s*(?:(?:{_TIME})\s*[-\u2013]\s*(?:{_TIME})|Closed)\.?"
+_HOURS_RE = re.compile(rf"(?:(?:Lobby|Drive-up)\s*(?:{_ITEM}\s*)+)+", re.I)
+
+
+def hours_only(text: str) -> str:
+    """Keep just the schedule ("Lobby Monday-Friday: ... Drive-up ...") from a passage that also carries neighbouring sentences."""
+    m = re.search(r"\bLobby\b", text)
+    if not m:
+        return text
+    h = _HOURS_RE.match(text, m.start())
+    return h.group(0).strip() if h else text
+
+
 # --------------------------------------------------------------------------- cleaning
 _IMG = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)[^)]*\)")
@@ -226,7 +241,8 @@ class PassageIndex:
     def __init__(self):
         self.snaps: list[dict] = []
 
-    def add_snapshot(self, passages: list[Passage], links: list[tuple[str, str, str, int]]) -> None:
+    def add_snapshot(self, passages: list[Passage], links: list[tuple[str, str, str, int]],
+                     people: Optional[list[tuple[str, str, str]]] = None) -> None:
         post: dict[str, list[int]] = defaultdict(list)
         df: Counter = Counter()
         total = 0
@@ -240,7 +256,8 @@ class PassageIndex:
         for p_ in passages:
             pagetok[p_.url].update(p_.tf)
             bypage[p_.url].append(p_)
-        self.snaps.append(dict(pagetok=pagetok, bypage=bypage, passages=passages, post=post, df=df, avg=total / max(1, len(passages)),
+        self.people = people or []
+        self.snaps.append(dict(people=people or [], pagetok=pagetok, bypage=bypage, passages=passages, post=post, df=df, avg=total / max(1, len(passages)),
                                links=links))
 
     # BM25 ---------------------------------------------------------------------
@@ -274,10 +291,45 @@ class PassageIndex:
 
 
 # --------------------------------------------------------------------------- intents
+_ROLE_RE = re.compile(
+    r"\b(?:ceo|chief executive(?: officer)?|president|(?:vice[\s-]+)?chair(?:man|woman|person)?|"
+    r"cfo|chief financial officer|coo|chief operating officer|chief [a-z]+ officer)\b", re.I)
+_WHOSE_RE = re.compile(r"\b(?:who|whom)\b|\bname of\b|\bwho'?s\b", re.I)
+_NAME_RE = re.compile(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z]\.)?\s+[A-Z][a-z]{2,}\b")
+_NOT_A_NAME = frozenset((
+    "president", "chief", "executive", "officer", "vice", "senior", "board", "chair", "chairman", "chairwoman",
+    "director", "dupaco", "community", "credit", "union", "foundation", "company", "bank", "the", "and", "of",
+    "leadership", "team", "member", "members", "report", "annual", "best", "place", "work", "iowa", "wisconsin",
+    "illinois", "dubuque", "manager", "officers", "secretary", "treasurer"))
+
+
+def _person_name(text: str) -> Optional[str]:
+    """A capitalised pair of words that is a person, not a job title or an organisation."""
+    for m in _NAME_RE.finditer(text):
+        if not (set(w.lower().strip(".") for w in m.group(0).split()) & _NOT_A_NAME):
+            return m.group(0)
+    return None
+
+
+_PAIR_RE = re.compile(r"^#{3,5}\s*([^\n#]{3,60}?)\s*\n+#{4,6}\s*([^\n#]{3,60}?)\s*$", re.M)
+
+
+def page_people(markdown: str) -> list[tuple[str, str]]:
+    """A staff or board listing writes the person as one heading and the job title as the next one."""
+    out = []
+    for m in _PAIR_RE.finditer(markdown):
+        name, title = clean(m.group(1)), clean(m.group(2))
+        if _person_name(name) and not _person_name(title) and len(title.split()) <= 6:
+            out.append((re.sub(r",\s*[A-Z]{2,}\.?$", "", name), title))
+    return out
+
+
 def intent_of(q: str) -> str:
     t = q.lower()
     if re.search(r"\brouting\b|\baba\b", t):
         return "routing"
+    if _ROLE_RE.search(t) and _WHOSE_RE.search(t) and re.search(r"\bdupaco\b|\bcredit union\b", t):
+        return "person"
     if re.search(r"\b(link|url|web ?address|webpage|web page|website for|where (?:can|do) i (?:find|see|go))\b", t) or \
             re.search(r"\b(?:how|where) (?:do|can|would) i (?:join|apply|enroll|sign up|become a member|log ?in)\b", t):
         return "url"
@@ -379,6 +431,10 @@ class ProseEngine:
                 return r
         if intent == "url":
             r = self._url(si, question)
+            if r:
+                return r
+        if intent == "person":
+            r = self._person(si, question)
             if r:
                 return r
         qt = query_tokens(question)
@@ -538,7 +594,7 @@ class ProseEngine:
                 if p.url != bp.url and _numbers(p.text) != sig and sc >= best * 0.7 and cv >= bcov - 0.2:
                     chosen.append(p)
                     break
-            text = " ".join(p.text[:260] for p in chosen) + " Hours vary by branch, so tell me which branch you mean for exact hours."
+            text = " ".join("One schedule on file: " + hours_only(p.text)[:260] if i == 0 else "Another schedule on file: " + hours_only(p.text)[:260] for i, p in enumerate(chosen)) + " Hours vary by branch, so tell me which branch you mean for exact hours."
             return ProseResult(re.sub(r"\s+", " ", text), [(p.url, p.text[:200]) for p in chosen], True,
                                "More than one hours schedule is published." if len(chosen) > 1 else None)
         # conflicting values: the most recently dated source wins
@@ -620,6 +676,51 @@ class ProseEngine:
         num, _ = votes.most_common(1)[0]
         p = where[num]
         return ProseResult(f"Dupaco's routing number is {num}.", [(p.url, p.text[:200])])
+
+    def _person(self, si: int, question: str) -> Optional["ProseResult"]:
+        """Who holds a role at Dupaco. The leadership section of the about page names the person under a
+        heading that is the job title, so a heading that is the role beats a quote in a press release."""
+        abbr = {"ceo": "chief executive officer", "cfo": "chief financial officer",
+                "coo": "chief operating officer", "cio": "chief information officer",
+                "cto": "chief technology officer"}
+        want = {m.group(0).lower() for m in _ROLE_RE.finditer(question)}
+        want |= {abbr[w] for w in list(want) if w in abbr}
+        if any(w.startswith("chair") for w in want):
+            want.add("chair")
+        S = self.index.snaps[si]
+        listed = None
+        for name, title, url in S.get("people", []):
+            tl = title.lower()
+            lead = 3 if any(tl.startswith(w) for w in want) else (1 if any(w in tl for w in want) else 0)
+            if not lead:
+                continue
+            score = lead - len(title) * 0.01
+            if listed is None or score > listed[0]:
+                listed = (score, name, title, url)
+        if listed is not None:
+            _, name, title, url = listed
+            return ProseResult(f"{name} is Dupaco's {title}.", [(url, f"{name} {title}")], True)
+        best = None
+        for p in S["passages"]:
+            if p.ptype in ("news", "blog", "resource"):
+                continue                      # a press-release quote is not where the site states who holds a role
+            head, body = p.heading or "", p.text
+            if "dupaco" not in (head + " " + body + " " + p.url).lower():
+                continue
+            hl = head.lower()
+            if not any(w in hl for w in want):
+                continue                      # only a heading that IS the job title is reliable; a mention in prose is not
+            name = _person_name(head) or _person_name(body)
+            if not name:
+                continue
+            lead = 3 if any(hl.startswith(w) for w in want) else 1
+            score = lead + len(head) * -0.01 + p.auth / 10 + (1 if _person_name(head) else 0)
+            if best is None or score > best[0]:
+                best = (score, name, head, p)
+        if best is None:
+            return None
+        _, name, head, p = best
+        return ProseResult(re.sub(r"\s+", " ", f"{name} is Dupaco's {head}."), [(p.url, p.text[:200])], True)
 
     def _url(self, si: int, question: str) -> Optional[ProseResult]:
         S = self.index.snaps[si]
