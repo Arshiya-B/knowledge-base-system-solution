@@ -29,8 +29,11 @@ Deterministic Python, standard library only. No LLM or network call at ingest or
 
 ## Known gaps
 - Prose facts are answered by a BM25 passage search with typed checks (phone, address, hours, amount, date, count, link). About 0.7 to 0.8 expected on unseen prose questions. Weak spot: deciding which of several pages owns a date or amount (hub pages versus the product page).
-- Known public misses (after round 4): lobby hours "noon" (only an old press release says it; the current branch pages say 12:30), and the unwinnable dup-005. Fine-grained product splits on one page are still weak (HELOC versus home equity loan limits on the same page).
-- `conflicts()` has no measured score: the hidden gold's size and granularity are unknown, and one entry per tier may cost precision.
+- Known public misses (current code, public score 0.9488): dup-005 (a certificate rate question where the expected answer reads back every rate but a forbidden phrase check still fires), dup-104 (the word "noon" is only in an old press release; current branch pages say 12:30) and dup-064 (lobby hours are correct, but the expected source is the home or contact page, while lobby hours are only published in branch news posts). Fine-grained product splits on one page are still weak (HELOC versus home equity loan limits on the same page).
+- Questions that ask the system to compare two pages ("what is the difference between the auto loan rate and the calculator rate") are not supported and abstain; the disagreement itself is listed by `conflicts()`.
+- Prose questions worded very differently from the page (the ext. 201 card services number, the community college scholarship count in prose4) can still miss.
+- `conflicts()` has no independent score: the hidden gold's size and granularity are unknown. Entries are grouped by product (see Round 5); if the hidden gold lists one entry per tier, grouping would lower recall, and `GROUP_BY_PRODUCT` in `solution/solution.py` switches it off.
+- Answers come only from the dated snapshots, so they can differ from the live website. Example: the latest snapshot (2026-09-28) lists the Rewards Visa Standard APR as 15.50% to 21.00% (rates effective 06/15/2026), while the live page later showed 15.75% to 21.00% effective 10/01/2026. That is the intended behaviour under the "answer only from the snapshots" rule.
 - API keys: none needed. The solution makes no network or LLM calls.
 
 ## Reproduce
@@ -102,7 +105,7 @@ conflicts() now returns one entry per product family instead of one per rate row
 
 ## Round 6: dates in the question, duplicate rows, people
 
-- `answer()` now reads a date written inside the question ("as of May 2026", "in June 2026") when the caller passes no `as_of`, and uses the latest snapshot on or before it. A date before the first snapshot abstains. The scorer passes `as_of` itself, so this changes no eval score; it matters for a person typing the question.
+- `answer()` now reads a date written inside the question when the caller passes no `as_of`, and uses the latest snapshot on or before it: "as of May 2026" or "in June 2026" (end of that month), "on June 20" or "for July 4" (that day, with no year taken as the year of the snapshots, 2026). A date before the first snapshot abstains, and "may" as a verb is not read as the month. The scorer passes `as_of` itself, so this changes no eval score; it matters for a person typing the question.
 - Rate answers no longer print the same product and value twice when a row appears on both the consumer and business rates pages. Rows that differ in value are still listed separately.
 - Lobby-hours answers print only the schedule lines, not the neighbouring sentences of the branch news post they came from.
 - Role questions ("who is the CEO / CFO / chair of the board at Dupaco") are answered from the leadership and board listing on /about, which pairs each name heading with a job-title heading, rather than from a quote in a press release. This also avoids a stale answer: a 2026 news post calls Ron Meyers board chairman, while the current about page lists him as a director and Randy Skemp as chair of the board. The question must name Dupaco or the credit union, so "who is the president of the United States" still abstains.
